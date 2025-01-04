@@ -3,8 +3,6 @@ import re
 import nltk
 from nltk.tokenize import sent_tokenize
 import jieba
-nltk.download('punkt')
-nltk.download('punkt_tab')
 
 
 # 读取英文文件
@@ -87,6 +85,10 @@ def preprocess(english_file_path, chinese_file_path):
     return df
 
 if __name__ == '__main__':
+    nltk.download('punkt', download_dir='data')
+    nltk.download('punkt_tab', download_dir='data')
+    nltk.data.path.append('data')
+
     # 读取英文文件
     df_en = read_english_file('data/TED2020.en-zh_cn.en')
     print(df_en.head(5))
