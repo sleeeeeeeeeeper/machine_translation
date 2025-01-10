@@ -38,12 +38,10 @@ class Translater:
 def load_vocab_cached(path):
     return load_vocab(path)
 
-
 # 使用缓存加载 FastText 模型
 @st.cache_resource
 def load_fasttext_model_cached(path):
     return fasttext.load_model(path)
-
 
 # 使用缓存加载模型权重
 @st.cache_data
@@ -61,11 +59,13 @@ def run_translation_app():
     ch_embedding_matrix = load_fasttext_embeddings(ch_vocab, ch_model, emb_dim=128)
     en_embedding_matrix = load_fasttext_embeddings(en_vocab, en_model, emb_dim=128)
     st.write("Embeddings loaded.")
-    model = Seq2Seq(8000, 8000, 128, 256, 2, zh_embeddings=ch_embedding_matrix, en_embeddings=en_embedding_matrix,
-                    max_len=50).to(device)
-    model.load_state_dict(
-        load_model_weights_cached('results/Seq2Seqmodel.pth', weights_only=True, map_location=torch.device(device))['model_state_dict'])
-    st.write("Model loaded.")
+    with st.spinner('Loading model...'):
+        model = Seq2Seq(8000, 8000, 128, 256, 2, zh_embeddings=ch_embedding_matrix, en_embeddings=en_embedding_matrix,
+                        max_len=50).to(device)
+        model.load_state_dict(
+            load_model_weights_cached('results/Seq2Seqmodel.pth', weights_only=True, map_location=torch.device(device))[
+                'model_state_dict'])
+    st.success('Model loaded!')
     translater = Translater(model, en_vocab, ch_vocab, device)
 
     st.title("English to Chinese Translator")
@@ -83,7 +83,7 @@ if __name__ == '__main__':
     # 运行streamlit应用
     run_translation_app()
 
-    # 测试翻译器
+    # # 测试翻译器
     # device = 'cuda' if torch.cuda.is_available() else 'cpu'
     # print(f'device:{device}')
     # ch_vocab = load_vocab('./data/chinese_vocab.pkl')
@@ -97,6 +97,6 @@ if __name__ == '__main__':
     # # model.load_state_dict(torch.load('results/Seq2Seqmodel.pth', weights_only=True)['model_state_dict'])
     # model.load_state_dict(torch.load('results/Seq2Seqmodel.pth', weights_only=True, map_location=torch.device('cpu'))['model_state_dict'])
     # translater = Translater(model, en_vocab, ch_vocab, device)
-    # sentence = 'man ! what can i say'
+    # sentence = 'thank you for your help'
     # output = translater.translate(sentence)
     # print(output)

@@ -299,6 +299,7 @@ if __name__ == '__main__':
 
     # 测试Seq2Seq模型
     model = Seq2Seq(100, 100, 256, 512, 2)
+    print(model)
 
     X = torch.randint(0, 100, (64, 20))
     Y = torch.randint(0, 100, (64, 10))
@@ -307,7 +308,7 @@ if __name__ == '__main__':
     print(f'output_idx shape: {output_idx.shape}')
     print(f'output shape: {output.shape}')
     eng = torch.tensor([[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]])
-    output_idx, output = model.translate(eng)
+    output_idx = model.translate(eng, device)
     print(f'output shape: {output.shape}')
     print(f'output_idx shape: {output_idx.shape}')
 
