@@ -11,7 +11,7 @@ The source language is TED2020.en-zh_cn.en, and the target language is TED2020.e
 First, clone the project locally.
 
 ``` bash
-git clone https://github.com/dinosaursoldiermhr/machine_translation.git
+git clone https://github.com/sleeeeeeeeeeper/machine_translation.git
 cd machine_translation
 ```
 
