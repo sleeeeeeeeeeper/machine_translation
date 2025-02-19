@@ -4,10 +4,9 @@ import torch.nn.functional as F
 import logging
 import os
 from matplotlib import pyplot as plt
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 import numpy as np
-from dataset import load_vocab
-import fasttext.util
 
 
 class Encoder(nn.Module):
@@ -59,7 +58,7 @@ class Seq2Seq(nn.Module):
         self.encoder = Encoder(input_dim, emb_dim, hid_dim, n_layers, pretrained_embeddings=zh_embeddings)
         self.decoder = Decoder(output_dim, emb_dim, hid_dim, n_layers, pretrained_embeddings=en_embeddings)
         self.max_len = max_len
-        self.teacher_forcing_ratio = 0.5
+        self.teacher_forcing_ratio = 0.7
 
     def forward(self, input, target, teacher_forcing=False):
         batch_size = input.size(0)
@@ -94,7 +93,6 @@ class Seq2Seq(nn.Module):
             outputs_idx[:, t] = top_idx.squeeze()
 
         return outputs_idx, outputs
-
 
     def translate(self, input, device, temperature=1.0, max_len=50):
         batch_size = input.size(0)
@@ -196,19 +194,18 @@ class Trainer:
         else:
             return 0, 0
 
-    def run_epoch(self, dataloader, optimizer, loss_func, epoch): # 训练一个epoch
+    def run_epoch(self, dataloader, optimizer, loss_func, epoch):
         model = self.model
         model.train()
-        pbar = tqdm(enumerate(dataloader), total=len(dataloader)) #用tqdm来生成迭代对象，在终端运行时就有实时进度条了
-        d_loss, d_n = 0.0, 0 # 总loss和总个数，用于求本轮训练的平均loss
+        pbar = tqdm(enumerate(dataloader), total=len(dataloader))
+        d_loss, d_n = 0.0, 0
+        batch_loss_history = []  # 新增：记录每个 batch 的损失
 
         for it, (X, Y) in pbar:
             X = X.to(self.device)
             Y = Y.to(self.device)
-            outputs_idx, outputs = model(X, Y, teacher_forcing=True) # 使用teacher forcing
-            outputs =  outputs.to(self.device)
-            # print(f'outputs_idx shape: {outputs_idx.shape}')
-            # print(f'outputs shape: {outputs.shape}')
+            outputs_idx, outputs = model(X, Y, teacher_forcing=True)
+            outputs = outputs.to(self.device)
             loss = 0.0
             for word_idx in range(outputs.size(1)):
                 lo = loss_func(outputs[:, word_idx, :], Y[:, word_idx])
@@ -217,30 +214,40 @@ class Trainer:
                 loss += lo
             loss = loss / outputs.size(1)
             d_loss += loss.item()
-            d_n += X.shape[0]
+            d_n += 1
             loss.backward()
-            optimizer.step() # 更新权重
-            optimizer.zero_grad() # zero_grad必须放在step后面！！！否则无法更新权重
-            pbar.set_description(f"epoch{epoch + 1} iter {it}: loss = {loss.item():.5f}. lr = {optimizer.param_groups[0]['lr']:.7f}")
+            optimizer.step()
+            optimizer.zero_grad()
+
+            batch_loss = loss.item()  # 当前 batch 的损失
+            batch_loss_history.append(batch_loss)  # 记录当前 batch 的损失
+            pbar.set_description(f"epoch {epoch + 1} iter {it}: loss = {batch_loss:.5f}. lr = {optimizer.param_groups[0]['lr']:.7f}")
 
         train_loss = d_loss / d_n
         self.train_loss_history.append(train_loss)
-        logging.info(f"Train, epoch {epoch + 1}, loss {d_loss / d_n:.5f}.") # 记录日志
+        logging.info(f"Train, epoch {epoch + 1}, loss {train_loss:.5f}.")
+
+        # 新增：将每个 batch 的损失保存到文件中
+        with open(f'results/train_batch_loss_epoch_{epoch + 1}.txt', 'w') as f:
+            for batch_loss in batch_loss_history:
+                f.write(f"{batch_loss}\n")
+
         return train_loss
 
-    def validate(self, dataloader, loss_func): # 在验证集上计算loss和acc
+    def validate(self, dataloader, loss_func, epoch):
         if dataloader is None:
             return None
         model = self.model
         model.eval()
         pbar = tqdm(enumerate(dataloader), total=len(dataloader))
         d_loss, d_n = 0.0, 0
+        batch_loss_history = []  # 新增：记录每个 batch 的验证损失
 
         with torch.no_grad():
             for it, (X, Y) in pbar:
                 X = X.to(self.device)
                 Y = Y.to(self.device)
-                outputs_idx, outputs = model(X, Y, teacher_forcing=True)  # 使用teacher forcing
+                outputs_idx, outputs = model(X, Y, teacher_forcing=True)
                 outputs = outputs.to(self.device)
                 loss = 0.0
                 for word_idx in range(outputs.size(1)):
@@ -250,34 +257,55 @@ class Trainer:
                     loss += lo
                 loss = loss / outputs.size(1)
                 d_loss += loss.item()
-                d_n += X.shape[0]
+                d_n += 1
+                batch_loss = loss.item()  # 当前 batch 的验证损失
+                batch_loss_history.append(batch_loss)  # 记录当前 batch 的验证损失
                 pbar.set_description("Validation")
 
         val_loss = d_loss / d_n if d_n != 0 else 0
         self.valid_loss_history.append(val_loss)
-        pbar.set_description(f"Validation, loss {val_loss:.5f}")
         logging.info(f"Validation, loss {val_loss:.5f}")
+
+        # 新增：将每个 batch 的验证损失保存到文件中
+        with open(f'results/valid_batch_loss_epoch_{epoch + 1}.txt', 'w') as f:
+            for batch_loss in batch_loss_history:
+                f.write(f"{batch_loss}\n")
+    
         return val_loss
-
-
-    def train(self, train_dataloader,val_dataloader, optimizer, loss_func, max_epoch=10): # 训练模型
+    
+    def train(self, train_dataloader, val_dataloader, optimizer, loss_func, max_epoch=10):
         start_epoch, best_loss = self.load_ckpt(optimizer)
         best_loss = self.valid_loss_history[-1] if self.valid_loss_history else float('inf')
+
+        # 新增：用于存储所有 epoch 的 batch 损失
+        all_train_batch_losses = []
+        all_valid_batch_losses = []
 
         for epoch in range(start_epoch, max_epoch):
             train_loss = self.run_epoch(train_dataloader, optimizer, loss_func, epoch)
             if val_dataloader is not None:
-                val_loss = self.validate(val_dataloader, loss_func)
+                val_loss = self.validate(val_dataloader, loss_func, epoch)
                 if val_loss < best_loss:
                     best_loss = val_loss
                     best_epoch = epoch
                     self.save_ckpt(best_epoch + 1, optimizer, best_loss)
-            else: # 如果没有验证集，就用训练集的loss来判断
+            else:
                 if train_loss < best_loss:
                     best_loss = train_loss
                     best_epoch = epoch
                     self.save_ckpt(best_epoch + 1, optimizer, best_loss)
 
+            # 读取当前 epoch 的 batch 损失并保存到全局列表中
+            with open(f'results/train_batch_loss_epoch_{epoch + 1}.txt', 'r') as f:
+                train_batch_losses = [float(line.strip()) for line in f]
+                all_train_batch_losses.extend(train_batch_losses)  # 将当前 epoch 的损失添加到全局列表
+
+            if val_dataloader is not None:
+                with open(f'results/valid_batch_loss_epoch_{epoch + 1}.txt', 'r') as f:
+                    valid_batch_losses = [float(line.strip()) for line in f]
+                    all_valid_batch_losses.extend(valid_batch_losses)  # 将当前 epoch 的验证损失添加到全局列表
+
+        # epoch loss
         plt.plot(self.train_loss_history)
         if val_dataloader is not None:
             plt.plot(self.valid_loss_history)
@@ -289,17 +317,39 @@ class Trainer:
         plt.title('Loss history')
         plt.savefig('results/train_loss.png')
 
-    def test(self, data):
-        pass
+        # batch loss
+        plt.figure(figsize=(12, 6))
+        plt.plot(all_train_batch_losses, label='Train Loss')
+        if val_dataloader is not None:
+            plt.plot(all_valid_batch_losses, label='Valid Loss')
+        plt.xlabel('Batch')
+        plt.ylabel('Loss')
+        plt.title('Batch Loss History')
+        plt.legend()
+        plt.savefig('results/batch_loss_history.png')
+
+    def test(self, data): # 测试模型
+        model = self.model
+        model.eval()
+        correct = 0
+        dataloader = DataLoader(data, batch_size=64)
+        pbar = tqdm(enumerate(dataloader), total=len(dataloader))
+        with torch.no_grad():
+            for it, (X, Y) in pbar:
+                X = X.to(self.device)
+                Y = Y.to(self.device)
+                y_hat = self.model.predict(X)
+                correct += (y_hat == Y).sum().item()  # item()将tensor转换为python数值，因为sum()返回的是tensor
+                pbar.set_description("Testing")
+
+        acc = correct / len(data)
+        print(f'Test acc: {acc:.4f}')
+        logging.info(f"Test acc: {acc:.4f}")
+        return acc
 
 if __name__ == '__main__':
-
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    print(f'device:{device}')
-
     # 测试Seq2Seq模型
     model = Seq2Seq(100, 100, 256, 512, 2)
-    print(model)
 
     X = torch.randint(0, 100, (64, 20))
     Y = torch.randint(0, 100, (64, 10))
@@ -308,19 +358,6 @@ if __name__ == '__main__':
     print(f'output_idx shape: {output_idx.shape}')
     print(f'output shape: {output.shape}')
     eng = torch.tensor([[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]])
-    output_idx = model.translate(eng, device)
+    output_idx, output = model.translate(eng)
     print(f'output shape: {output.shape}')
     print(f'output_idx shape: {output_idx.shape}')
-
-    # 将fasttext词向量降维并保存
-    fasttext.util.download_model('en', if_exists='ignore')
-    fasttext.util.download_model('zh', if_exists='ignore')
-    ch_vocab = load_vocab('./data/chinese_vocab.pkl')
-    ch_model = fasttext.load_model('cc.zh.300.bin')
-    fasttext.util.reduce_model(ch_model, 128)
-    ch_model.save_model('cc.zh.128.bin')
-    en_vocab = load_vocab('./data/english_vocab.pkl')
-    en_model = fasttext.load_model('cc.en.300.bin')
-    fasttext.util.reduce_model(en_model, 128)
-    en_model.save_model('cc.en.128.bin')
-    print('model saved')

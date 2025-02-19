@@ -31,7 +31,7 @@ def load_vocab(vocab_file):
 def build_data(df, english_vocab, chinese_vocab):
     # 重置索引，使索引从0开始
     df = df.reset_index(drop=True)
-    df = df.sample(n=150000).reset_index(drop=True)
+    df = df.sample(n=100000).reset_index(drop=True)
     english = [[0] + [english_vocab.get(token, 3) for token in eval(line)] + [1] for line in df['english']] # .get()方法返回指定键的值，如果值不在字典中返回默认值
     chinese = [[0] + [chinese_vocab.get(token, 3) for token in eval(line)] + [1] for line in df['chinese']] # 因此，未知词的索引赋为了3
     print(df.iloc[0])
