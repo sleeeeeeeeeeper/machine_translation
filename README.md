@@ -44,7 +44,7 @@ python dataset.py
 
 ### 3. download the pre-trained word vector
 
-Here we use fasttext's pre-trained word vector. We first download the original word vector in 300 dimensions, then reduce it to 128 dimensions and save it.
+Here we use fasttext's pre-trained word vector. We first download the original fasttext word vector in 300 dimensions, then reduce it to 128 dimensions and save it.
 
 ``` bash
 python models.py
